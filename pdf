@@ -1,0 +1,73 @@
+import os
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+from azure.ai.formrecognizer import DocumentAnalysisClient
+from azure.ai.formrecognizer import AnalyzeResult
+from azure.mgmt.sql import SqlManagementClient
+from azure.keyvault.secrets import SecretClient
+from azure.eventgrid import EventGridPublisherClient
+from azure.monitor.query import MetricsQueryClient
+from azure.logicapps import LogicAppsClient
+
+# Настройка подключений
+blob_connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+form_recognizer_endpoint = os.getenv("AZURE_FORM_RECOGNIZER_ENDPOINT")
+form_recognizer_key = os.getenv("AZURE_FORM_RECOGNIZER_KEY")
+sql_connection_string = os.getenv("AZURE_SQL_CONNECTION_STRING")
+key_vault_url = os.getenv("AZURE_KEY_VAULT_URL")
+event_grid_topic_endpoint = os.getenv("EVENT_GRID_TOPIC_ENDPOINT")
+app_service_url = os.getenv("APP_SERVICE_URL")
+
+# 1. Загрузка документа в Blob Storage
+def upload_document(file_path, container_name):
+    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=os.path.basename(file_path))
+    
+    with open(file_path, "rb") as data:
+        blob_client.upload_blob(data)
+    print(f"Document uploaded to Blob Storage: {file_path}")
+
+# 2. Обработка документа с помощью Form Recognizer
+def analyze_document(file_url):
+    client = DocumentAnalysisClient(form_recognizer_endpoint, DefaultAzureCredential())
+    
+    poller = client.begin_analyze_document_from_url("prebuilt-document", file_url)
+    result = poller.result()
+    
+    extracted_text = "\n".join([line.content for page in result.pages for line in page.lines])
+    print(f"Extracted Text: {extracted_text[:500]}...")  # Выводим первые 500 символов
+    return extracted_text
+
+# 3. Классификация документа (например, с помощью ML модели)
+def classify_document(text):
+    # Пример классификации, здесь можно использовать модели Azure ML
+    if "contract" in text.lower():
+        classification = "Contract"
+    else:
+        classification = "Other"
+    print(f"Document classified as: {classification}")
+    return classification
+
+# 4. Сохранение метаданных в SQL Database
+def save_metadata_to_sql(document_text, classification):
+    client = SqlManagementClient(credential=DefaultAzureCredential())
+    query = f"INSERT INTO Documents (Text, Classification) VALUES ('{document_text}', '{classification}');"
+    client.execute(query)
+    print(f"Document metadata saved to SQL database.")
+
+# 5. Отправка уведомлений с помощью Logic Apps
+def send_notification(email, document_name):
+    client = LogicAppsClient(credential=DefaultAzureCredential())
+    response = client.trigger_logic_app({'email': email, 'document_name': document_name})
+    print(f"Notification sent: {response.status_code}")
+
+# Основная логика
+if __name__ == "__main__":
+    # Пример загрузки и обработки документа
+    upload_document("document.pdf", "documents")
+    document_url = "https://storage_account.blob.core.windows.net/documents/document.pdf"
+    extracted_text = analyze_document(document_url)
+    classification = classify_document(extracted_text)
+    save_metadata_to_sql(extracted_text, classification)
+    send_notification("user@example.com", "document.pdf")
+
